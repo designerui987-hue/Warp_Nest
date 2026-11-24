@@ -466,6 +466,7 @@ struct WarpCTL {
 
         case "launch":
             let smallMode = subargs.contains("--no-browser")
+            let gamepadUI = subargs.contains("--gamepadui")
             var appId: String? = nil
             if let idx = subargs.firstIndex(of: "--app"), idx + 1 < subargs.count {
                 appId = subargs[idx + 1]
@@ -476,7 +477,8 @@ struct WarpCTL {
                 return
             }
 
-            var args = await steam.recommendedSteamArguments(smallMode: smallMode)
+            await steam.ensureFontsInstalled()
+            var args = await steam.recommendedSteamArguments(smallMode: smallMode, gamepadUI: gamepadUI)
             if let appId = appId {
                 args.append(contentsOf: ["-applaunch", appId])
                 print("Launching Steam AppID \(appId) in '\(prefixName)'...")

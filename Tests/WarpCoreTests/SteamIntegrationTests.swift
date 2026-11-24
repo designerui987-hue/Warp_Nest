@@ -14,9 +14,11 @@ struct SteamIntegrationTests {
 
         let argsDefault = await steam.recommendedSteamArguments(smallMode: false)
         #expect(argsDefault.contains("-no-cef-sandbox"))
-        #expect(argsDefault.contains("-cef-disable-gpu"))
-        #expect(argsDefault.contains("-udpcheck"))
         #expect(!argsDefault.contains("-no-browser"))
+        #expect(!argsDefault.contains("-gamepadui"))
+
+        let argsGamepad = await steam.recommendedSteamArguments(gamepadUI: true)
+        #expect(argsGamepad.contains("-gamepadui"))
 
         let argsSmall = await steam.recommendedSteamArguments(smallMode: true)
         #expect(argsSmall.contains("-no-browser"))

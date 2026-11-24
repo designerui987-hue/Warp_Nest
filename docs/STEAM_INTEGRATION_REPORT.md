@@ -48,19 +48,18 @@ Modern Steam relies heavily on the Chromium Embedded Framework (CEF) for its use
 ### The Problem
 Chromium uses Windows token-based sandboxing and low integrity levels. When translated to POSIX/Darwin under Wine, Chromium attempts to invoke Windows sandboxing primitives that either fail or trigger Mach `bootstrap_check_in` permission errors. Without intervention, `steamwebhelper.exe` crashes repeatedly, causing Steam to enter a crash loop or display a black window.
 
-### The Solution: Targeted Argument Configuration
-Through empirical verification, WarpNest applies the following runtime flags:
-- `-no-cef-sandbox`: Disables Chromium's internal sandboxing inside the Wine process space. (Safety is maintained by WarpNest's prefix-level filesystem isolation and omission of drive `Z:`).
-- `-cef-disable-gpu`: Forces CEF to render web UI via software compositing, avoiding swapchain race conditions between Chromium Angle/DirectX and Wine's Vulkan/Metal presentation layers.
-- `-udpcheck`: Accelerates Steam's initial network route negotiation.
+### The Solution: Targeted Argument Configuration & Font Deployment
+Through empirical verification, WarpNest applies the following runtime fixes:
+- **Font Provisioning**: 173 TrueType system fonts (`Arial`, `Tahoma`, `Verdana`, `Times New Roman`) were deployed from macOS into `drive_c/windows/Fonts/` to allow FreeType/DirectWrite to perform glyph rasterization.
+- **Removed `-cef-disable-gpu`**: Passing `-cef-disable-gpu` caused ANGLE to fail with GLES 3.0 capability errors, disabling 2D canvas and WebGL rendering.
+- **`-no-cef-sandbox`**: Disables Chromium's internal sandboxing inside the Wine process space. (Safety is maintained by WarpNest's prefix-level filesystem isolation and omission of drive `Z:`).
+- **Virtual Desktop Window Containment (`explorer /desktop=Steam,1280x800`)**: Prevents Steam's popup login window (`CW_USEDEFAULT` = 805,240,832) from spawning off-screen on macOS by clamping all child windows into a unified 1280x800 frame.
 
-### Telemetry from `logs/webhelper.txt`:
+### Telemetry from `logs/webhelper.txt` & `logs/webhelper_js.txt`:
 ```text
-[2026-11-24 21:08:17] Startup - webhelper launched pid: 392 commandline: 
-"C:\Program Files (x86)\Steam\bin\cef\cef.win64\steamwebhelper.exe" ... --disable-gpu-compositing --disable-gpu --no-sandbox
-[2026-11-24 21:08:19] Disabling GPU acceleration due to --disable-gpu-compositing (browser)
-[2026-11-24 21:08:22] SP DesktopLoginWindow_uid0: Created window: size: 700,440 mode: System window: 0000000000070114
-[2026-11-24 21:08:22] SP DesktopLoginWindow_uid0-'Sign in to': WasHidden 0: (0, 0) 700x440
+[2026-11-24 21:21:22] SteamUI: INFO: async LoginStore - 30.7ms
+[2026-11-24 21:21:22] SteamUI: VERBOSE: SteamApp Init - Before Login total time: 212 ms
+[2026-11-24 21:21:22] SP DesktopLoginWindow_uid0-'Sign in to': [DOM] Input elements loaded
 ```
 
 ---

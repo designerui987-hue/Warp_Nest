@@ -266,16 +266,33 @@ public actor SteamIntegration {
 
     /// Builds standard recommended arguments for launching Steam inside Wine.
     /// `-no-cef-sandbox` is critical on Darwin/macOS because Chromium's sandbox fails in Wine.
-    public func recommendedSteamArguments(smallMode: Bool = false) -> [String] {
+    /// Omits `-cef-disable-gpu` as that causes ANGLE 2D canvas and WebGL black-screens in modern CEF.
+    public func recommendedSteamArguments(smallMode: Bool = false, gamepadUI: Bool = false) -> [String] {
         var args = [
-            "-no-cef-sandbox",
-            "-cef-disable-gpu",
-            "-udpcheck"
+            "-no-cef-sandbox"
         ]
+        if gamepadUI {
+            args.append("-gamepadui")
+        }
         if smallMode {
             args.append("-no-browser")
         }
         return args
+    }
+
+    /// Ensures standard TrueType fonts exist in the bottle to prevent CEF text rendering failures.
+    public func ensureFontsInstalled() {
+        let fontsDir = bottle.driveCURL.appendingPathComponent("windows/Fonts", isDirectory: true)
+        try? fileManager.createDirectory(at: fontsDir, withIntermediateDirectories: true)
+        let supplemental = URL(fileURLWithPath: "/System/Library/Fonts/Supplemental")
+        if let items = try? fileManager.contentsOfDirectory(at: supplemental, includingPropertiesForKeys: nil) {
+            for item in items where item.pathExtension == "ttf" {
+                let dest = fontsDir.appendingPathComponent(item.lastPathComponent)
+                if !fileManager.fileExists(atPath: dest.path) {
+                    try? fileManager.copyItem(at: item, to: dest)
+                }
+            }
+        }
     }
 
     /// Builds launch options for Steam or Steam app launches.
