@@ -13,14 +13,19 @@ public final class WineEngine: CompatibilityEngineProtocol, @unchecked Sendable 
     public init(
         id: String = "wine-default",
         displayName: String = "Open-Source Wine (WoW64)",
-        engineVersion: String = "9.x",
+        engineVersion: String = "11.x",
         rootURL: URL,
         fileManager: FileManager = .default
     ) {
         self.id = id
         self.displayName = displayName
         self.engineVersion = engineVersion
-        self.binaryURL = rootURL.appendingPathComponent("bin/wine64")
+        let candidate64 = rootURL.appendingPathComponent("bin/wine64")
+        if fileManager.fileExists(atPath: candidate64.path) {
+            self.binaryURL = candidate64
+        } else {
+            self.binaryURL = rootURL.appendingPathComponent("bin/wine")
+        }
         self.wineServerURL = rootURL.appendingPathComponent("bin/wineserver")
         self.fileManager = fileManager
     }
@@ -75,7 +80,13 @@ public final class WineEngine: CompatibilityEngineProtocol, @unchecked Sendable 
 
         // Construct arguments
         var args: [String] = []
-        args.append(options.executableURL.path)
+        let exePath = options.executableURL.path
+        if exePath.hasPrefix("/") && fileManager.fileExists(atPath: exePath) {
+            args.append(exePath)
+        } else {
+            // Builtin Windows utility (e.g. cmd.exe, regedit.exe, winecfg)
+            args.append(options.executableURL.lastPathComponent)
+        }
         args.append(contentsOf: options.arguments)
         process.arguments = args
 

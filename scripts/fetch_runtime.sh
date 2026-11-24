@@ -12,7 +12,7 @@ WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENGINES_DIR="${WORKSPACE_ROOT}/engines"
 DEFAULT_TARGET_DIR="${ENGINES_DIR}/wine-default"
 
-DEFAULT_RELEASE_VERSION="9.22"
+DEFAULT_RELEASE_VERSION="11.21"
 DEFAULT_URL="https://github.com/Gcenx/macOS_Wine_builds/releases/download/${DEFAULT_RELEASE_VERSION}/wine-staging-${DEFAULT_RELEASE_VERSION}-osx64.tar.xz"
 
 LOCAL_TARBALL=""
@@ -87,16 +87,16 @@ tar -xf "${SOURCE_ARCHIVE}" -C "${EXTRACT_TMP}"
 # Detect extraction layout
 # Some archives contain a top-level app bundle (e.g., 'Wine Staging.app/Contents/Resources/wine')
 # Others contain bin/ and lib/ directly.
-FOUND_WINE_BIN=""
-if [[ -f "${EXTRACT_TMP}/bin/wine64" ]]; then
+FOUND_WINE_DIR=""
+if [[ -f "${EXTRACT_TMP}/bin/wine" || -f "${EXTRACT_TMP}/bin/wine64" ]]; then
     FOUND_WINE_DIR="${EXTRACT_TMP}"
-elif compgen -G "${EXTRACT_TMP}/*.app/Contents/Resources/wine/bin/wine64" > /dev/null; then
+elif compgen -G "${EXTRACT_TMP}/*.app/Contents/Resources/wine/bin/wine*" > /dev/null; then
     APP_PATH=$(ls -d "${EXTRACT_TMP}"/*.app | head -n 1)
     FOUND_WINE_DIR="${APP_PATH}/Contents/Resources/wine"
-elif compgen -G "${EXTRACT_TMP}/*wine*/bin/wine64" > /dev/null; then
+elif compgen -G "${EXTRACT_TMP}/*wine*/bin/wine*" > /dev/null; then
     FOUND_WINE_DIR=$(ls -d "${EXTRACT_TMP}"/*wine* | head -n 1)
 else
-    echo "Error: Could not locate 'bin/wine64' inside unpacked archive."
+    echo "Error: Could not locate 'bin/wine' or 'bin/wine64' inside unpacked archive."
     rm -rf "${EXTRACT_TMP}"
     [[ -z "${LOCAL_TARBALL}" ]] && rm -rf "${TEMP_DIR}"
     exit 1
@@ -106,6 +106,11 @@ echo "Deploying verified engine to: ${DEFAULT_TARGET_DIR}"
 rm -rf "${DEFAULT_TARGET_DIR}"
 mkdir -p "$(dirname "${DEFAULT_TARGET_DIR}")"
 cp -R "${FOUND_WINE_DIR}" "${DEFAULT_TARGET_DIR}"
+
+# Ensure wine64 symlink exists if only wine is present
+if [[ -f "${DEFAULT_TARGET_DIR}/bin/wine" && ! -f "${DEFAULT_TARGET_DIR}/bin/wine64" ]]; then
+    ln -s "wine" "${DEFAULT_TARGET_DIR}/bin/wine64"
+fi
 
 # Remove quarantine flags if any
 xattr -rd com.apple.quarantine "${DEFAULT_TARGET_DIR}" 2>/dev/null || true

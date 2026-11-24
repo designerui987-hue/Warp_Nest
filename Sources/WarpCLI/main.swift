@@ -35,12 +35,71 @@ struct WarpCLI {
             return
         }
 
+        if args.contains("run") {
+            guard let bottleIdx = args.firstIndex(of: "--bottle"), bottleIdx + 1 < args.count else {
+                print("Error: Missing --bottle <name>")
+                return
+            }
+            guard let exeIdx = args.firstIndex(of: "--exe"), exeIdx + 1 < args.count else {
+                print("Error: Missing --exe <path>")
+                return
+            }
+
+            let bottleName = args[bottleIdx + 1]
+            let exeName = args[exeIdx + 1]
+
+            // Extract additional arguments after --
+            var passArgs: [String] = []
+            if let separatorIdx = args.firstIndex(of: "--") {
+                passArgs = Array(args.suffix(from: separatorIdx + 1))
+            }
+
+            let workspaceRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            let engineURL = workspaceRoot.appendingPathComponent("engines/wine-default")
+            let bottleRoot = workspaceRoot.appendingPathComponent("bottles").appendingPathComponent(bottleName)
+
+            let engine = WineEngine(rootURL: engineURL)
+            let validation = await engine.validate()
+            guard validation.isExecutable else {
+                print("Engine validation error: \(validation.diagnosticNotes)")
+                return
+            }
+
+            let bottle = Bottle(
+                id: UUID().uuidString,
+                name: bottleName,
+                rootURL: bottleRoot
+            )
+
+            let options = LaunchOptions(
+                executableURL: URL(fileURLWithPath: exeName),
+                arguments: passArgs,
+                graphicsBackend: .dxmt
+            )
+
+            do {
+                print("Dispatching Windows PE binary: \(exeName) via WarpEngine...")
+                let result = try await engine.execute(options: options, in: bottle)
+                print("--- Process Output (Exit code: \(result.exitCode), Duration: \(String(format: "%.2f", result.durationSeconds))s) ---")
+                if !result.standardOutput.isEmpty {
+                    print(result.standardOutput)
+                }
+                if !result.standardError.isEmpty {
+                    print(result.standardError)
+                }
+            } catch {
+                print("Execution error: \(error.localizedDescription)")
+            }
+            return
+        }
+
         print("""
         WarpNest - Native macOS Gaming Compatibility Platform
         Usage:
-          warpnest doctor          Check hardware, Metal & Rosetta capability
-          warpnest bottles         List isolated game bottles
-          warpnest --version       Print version
+          warpnest doctor                               Check hardware, Metal & Rosetta capability
+          warpnest bottles                              List isolated game bottles
+          warpnest run --bottle <name> --exe <exe> [--] Execute Windows PE binary inside bottle
+          warpnest --version                            Print version
         """)
     }
 }
