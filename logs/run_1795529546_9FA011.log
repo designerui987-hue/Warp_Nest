@@ -1,0 +1,16 @@
+=== WarpNest Execution Log ===
+ID:         9FA0110C-3CB8-4895-BEE3-8E9551904A64
+Date:       2026-11-24 14:12:26 +0000
+Executable: wine
+Arguments:  cmd.exe /c echo [STAGE4] Windows Console Verified && ver
+Prefix:     /Volumes/Personal/WarpNest/bottles/LadderTestBottle
+Exit Code:  0
+Duration:   1.25s
+--- STDOUT ---
+[STAGE4] Windows Console Verified 
+
+Microsoft Windows 10.0.19045
+
+--- STDERR ---
+
+==============================

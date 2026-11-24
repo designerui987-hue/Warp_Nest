@@ -1,0 +1,13 @@
+=== WarpNest Execution Log ===
+ID:         C013C13D-F87A-4D86-A8FE-81364E5A9F33
+Date:       2026-11-24 14:12:31 +0000
+Executable: wine
+Arguments:  /tmp/warp_custom_test.exe
+Prefix:     /Volumes/Personal/WarpNest/bottles/LadderTestBottle
+Exit Code:  42
+Duration:   1.08s
+--- STDOUT ---
+
+--- STDERR ---
+
+==============================

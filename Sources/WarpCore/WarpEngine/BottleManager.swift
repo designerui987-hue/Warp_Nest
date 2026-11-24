@@ -150,10 +150,20 @@ public actor BottleManager {
         var bottles: [Bottle] = []
 
         for url in contents {
+            guard (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { continue }
             let metaURL = url.appendingPathComponent("warpnest.json")
             if fileManager.fileExists(atPath: metaURL.path),
                let data = try? Data(contentsOf: metaURL),
                let bottle = try? JSONDecoder().decode(Bottle.self, from: data) {
+                bottles.append(bottle)
+            } else if fileManager.fileExists(atPath: url.appendingPathComponent("system.reg").path) || fileManager.fileExists(atPath: url.appendingPathComponent("drive_c").path) {
+                let bottle = Bottle(
+                    id: UUID().uuidString,
+                    name: url.lastPathComponent,
+                    rootURL: url,
+                    architecture: .win64,
+                    windowsVersion: "win10"
+                )
                 bottles.append(bottle)
             }
         }

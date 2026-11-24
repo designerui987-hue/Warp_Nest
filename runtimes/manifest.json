@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "1.0",
+  "defaultRuntime": "wine-staging-11.21",
+  "runtimes": [
+    {
+      "id": "wine-staging-11.21",
+      "name": "Wine Staging 11.21 (WoW64)",
+      "version": "11.21",
+      "branch": "staging",
+      "upstreamUrl": "https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.21/wine-staging-11.21-osx64.tar.xz",
+      "archiveFormat": "tar.xz",
+      "supportedArchitectures": ["arm64", "x86_64"],
+      "license": "GNU LGPL-2.1-or-later",
+      "bundledComponents": [
+        "wine-gecko",
+        "wine-mono",
+        "MoltenVK 1.4.0 (Vulkan 1.4)",
+        "GStreamer 1.0",
+        "winemac.drv (Cocoa Native Display Driver)"
+      ],
+      "compatibilityRequirements": {
+        "minMacOS": "10.15",
+        "recommendedMacOS": "14.0+",
+        "rosettaRequired": true,
+        "graphicsTranslation": ["DXVK", "MoltenVK", "WineD3D"]
+      }
+    },
+    {
+      "id": "wine-devel-11.21",
+      "name": "Wine Development 11.21 (WoW64)",
+      "version": "11.21",
+      "branch": "devel",
+      "upstreamUrl": "https://github.com/Gcenx/macOS_Wine_builds/releases/download/11.21/wine-devel-11.21-osx64.tar.xz",
+      "archiveFormat": "tar.xz",
+      "supportedArchitectures": ["arm64", "x86_64"],
+      "license": "GNU LGPL-2.1-or-later",
+      "bundledComponents": [
+        "wine-gecko",
+        "wine-mono",
+        "MoltenVK 1.4.0",
+        "winemac.drv"
+      ],
+      "compatibilityRequirements": {
+        "minMacOS": "10.15",
+        "recommendedMacOS": "14.0+",
+        "rosettaRequired": true,
+        "graphicsTranslation": ["DXVK", "MoltenVK"]
+      }
+    }
+  ]
+}

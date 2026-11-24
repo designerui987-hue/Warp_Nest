@@ -8,12 +8,17 @@ let package = Package(
     ],
     products: [
         .library(name: "WarpCore", targets: ["WarpCore"]),
+        .executable(name: "warpctl", targets: ["WarpCTL"]),
         .executable(name: "warpnest", targets: ["WarpCLI"])
     ],
     targets: [
         .target(
             name: "WarpCore",
             dependencies: []
+        ),
+        .executableTarget(
+            name: "WarpCTL",
+            dependencies: ["WarpCore"]
         ),
         .executableTarget(
             name: "WarpCLI",
