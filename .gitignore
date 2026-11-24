@@ -8,3 +8,6 @@ engines/*
 !engines/.gitkeep
 bottles/*
 !bottles/.gitkeep
+installers/*
+!installers/.gitkeep
+logs/*.log

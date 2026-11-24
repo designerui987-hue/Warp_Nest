@@ -43,6 +43,9 @@ struct WarpCTL {
         case "graphics":
             await handleGraphicsCommand(subargs: subargs, enginesRoot: enginesRoot, bottlesRoot: bottlesRoot, logsURL: logsURL)
 
+        case "steam":
+            await handleSteamCommand(subargs: subargs, enginesRoot: enginesRoot, bottlesRoot: bottlesRoot, workspaceRoot: workspaceRoot)
+
         case "test":
             await handleTestCommand(enginesRoot: enginesRoot, workspaceRoot: workspaceRoot)
 
@@ -390,6 +393,150 @@ struct WarpCTL {
         }
     }
 
+    private static func handleSteamCommand(subargs: [String], enginesRoot: URL, bottlesRoot: URL, workspaceRoot: URL) async {
+        guard let action = subargs.first else {
+            print("Usage: warpctl steam <install|status|launch|list|run> [options]")
+            return
+        }
+
+        var prefixName = "SteamBottle"
+        if let idx = subargs.firstIndex(of: "--prefix"), idx + 1 < subargs.count {
+            prefixName = subargs[idx + 1]
+        }
+
+        let bottleRoot = bottlesRoot.appendingPathComponent(prefixName)
+        let bottle = Bottle(
+            id: UUID().uuidString,
+            name: prefixName,
+            rootURL: bottleRoot,
+            architecture: .win64,
+            windowsVersion: "win10"
+        )
+        let engineURL = enginesRoot.appendingPathComponent("wine-default")
+        let engine = WineEngine(rootURL: engineURL)
+        let steam = SteamIntegration(bottle: bottle, engine: engine)
+
+        switch action {
+        case "status":
+            print("=== Steam Integration Status [Prefix: \(prefixName)] ===")
+            if let exe = await steam.detectedSteamExecutableURL {
+                print("Status:     [INSTALLED]")
+                print("Executable: \(exe.path)")
+                let libraries = await steam.discoverLibraryFolders()
+                print("Libraries:  \(libraries.count) discovered")
+                for lib in libraries {
+                    print("  - \(lib.path)")
+                }
+                let games = await steam.discoverInstalledGames()
+                print("Installed Games: \(games.count)")
+            } else {
+                print("Status:     [NOT INSTALLED]")
+                print("Expected:   \(bottle.driveCURL.appendingPathComponent("Program Files (x86)/Steam/Steam.exe").path)")
+                print("Run 'warpctl steam install --prefix \(prefixName)' to install.")
+            }
+
+        case "install":
+            var installerURL = workspaceRoot.appendingPathComponent("installers/SteamSetup.exe")
+            if let idx = subargs.firstIndex(of: "--installer"), idx + 1 < subargs.count {
+                installerURL = URL(fileURLWithPath: subargs[idx + 1])
+            }
+            print("Installing Windows Steam into prefix '\(prefixName)'...")
+            print("Installer: \(installerURL.path)")
+            do {
+                try await steam.install(from: installerURL)
+                print("Successfully installed Steam client into '\(prefixName)'!")
+            } catch {
+                print("Steam installation failed: \(error.localizedDescription)")
+            }
+
+        case "list":
+            let games = await steam.discoverInstalledGames()
+            print("=== Discovered Steam Games in '\(prefixName)' ===")
+            if games.isEmpty {
+                print("No Steam games currently installed in prefix.")
+                print("Launch Steam with 'warpctl steam launch --prefix \(prefixName)' to download games.")
+            } else {
+                for g in games {
+                    let state = g.isFullyInstalled ? "[INSTALLED]" : (g.isDownloading ? "[DOWNLOADING \(Int(g.downloadProgress * 100))%]" : "[INCOMPLETE]")
+                    let mb = Double(g.sizeOnDisk) / (1024 * 1024)
+                    print("\(state) AppID: \(g.appId) | \(g.name) (\(String(format: "%.1f", mb)) MB)")
+                    print("       Dir: \(g.gameDirectoryURL.path)")
+                }
+            }
+
+        case "launch":
+            let smallMode = subargs.contains("--no-browser")
+            var appId: String? = nil
+            if let idx = subargs.firstIndex(of: "--app"), idx + 1 < subargs.count {
+                appId = subargs[idx + 1]
+            }
+
+            guard let steamExe = await steam.detectedSteamExecutableURL else {
+                print("Error: Steam is not installed in prefix '\(prefixName)'. Run 'warpctl steam install' first.")
+                return
+            }
+
+            var args = await steam.recommendedSteamArguments(smallMode: smallMode)
+            if let appId = appId {
+                args.append(contentsOf: ["-applaunch", appId])
+                print("Launching Steam AppID \(appId) in '\(prefixName)'...")
+            } else {
+                print("Launching Windows Steam client in '\(prefixName)'...")
+            }
+            if smallMode {
+                print("Mode: Small / Minimal (no-browser)")
+            }
+            print("Command: wine \(steamExe.lastPathComponent) \(args.joined(separator: " "))")
+            print("Note: Complete user login / Steam Guard manually in the Steam window.")
+
+            let proc = Process()
+            proc.executableURL = engine.binaryURL
+            proc.arguments = [steamExe.path] + args
+            proc.currentDirectoryURL = steamExe.deletingLastPathComponent()
+            var env = ProcessInfo.processInfo.environment
+            env["WINEPREFIX"] = bottle.rootURL.path
+            env["WINEDEBUG"] = "-all"
+            proc.environment = env
+            do {
+                try proc.run()
+                proc.waitUntilExit()
+            } catch {
+                print("Launch failed: \(error.localizedDescription)")
+            }
+
+        case "run":
+            guard let idx = subargs.firstIndex(of: "--app"), idx + 1 < subargs.count else {
+                print("Error: Missing --app <appid> argument")
+                return
+            }
+            let appId = subargs[idx + 1]
+            let extraArgs = Array(subargs.drop(while: { $0 != "--" }).dropFirst())
+            guard let steamExe = await steam.detectedSteamExecutableURL else {
+                print("Error: Steam is not installed in prefix '\(prefixName)'.")
+                return
+            }
+            print("Coordinating launch of Steam AppID \(appId)...")
+            let args = await steam.recommendedSteamArguments() + ["-applaunch", appId] + extraArgs
+            let proc = Process()
+            proc.executableURL = engine.binaryURL
+            proc.arguments = [steamExe.path] + args
+            proc.currentDirectoryURL = steamExe.deletingLastPathComponent()
+            var env = ProcessInfo.processInfo.environment
+            env["WINEPREFIX"] = bottle.rootURL.path
+            env["WINEDEBUG"] = "-all"
+            proc.environment = env
+            do {
+                try proc.run()
+                proc.waitUntilExit()
+            } catch {
+                print("Execution failed: \(error.localizedDescription)")
+            }
+
+        default:
+            print("Unknown steam action: \(action)")
+        }
+    }
+
     private static func handleTestCommand(enginesRoot: URL, workspaceRoot: URL) async {
         let engineURL = enginesRoot.appendingPathComponent("wine-default")
         print("Starting WarpNest 7-Stage Verification Ladder...")
@@ -415,6 +562,11 @@ struct WarpCTL {
           warpctl graphics inspect --prefix <n> Inspect graphics configuration for prefix
           warpctl graphics set --prefix <n> ... Set prefix backend (dxvk, dxmt, wined3d)
           warpctl graphics test --prefix <n>    Execute Direct3D 11 hardware probe
+          warpctl steam status [--prefix <n>]   Inspect Windows Steam client in prefix
+          warpctl steam install [--prefix <n>]  Install Windows Steam client
+          warpctl steam launch [--prefix <n>]   Launch Windows Steam client
+          warpctl steam list [--prefix <n>]     Discover installed Steam games in prefix
+          warpctl steam run --app <id> ...      Launch installed Steam game
           warpctl logs                          Show recent process execution logs
           warpctl test                          Execute 7-stage Verification Ladder
         """)
