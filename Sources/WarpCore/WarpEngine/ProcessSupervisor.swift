@@ -60,53 +60,26 @@ public actor ProcessSupervisor {
     ) async throws -> ExecutionLogRecord {
         try? fileManager.createDirectory(at: logsDirectory, withIntermediateDirectories: true)
 
-        let process = Process()
-        process.executableURL = executableURL
-        process.arguments = arguments
-        process.environment = environment
-        if let workingDir = workingDirectory {
-            process.currentDirectoryURL = workingDir
-        }
+        let supervisor = SteamProcessSupervisor()
+        let output = try await supervisor.runAsync(
+            executableURL: executableURL,
+            arguments: arguments,
+            environment: environment,
+            workingDirectory: workingDirectory,
+            timeoutSeconds: timeoutSeconds
+        )
 
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-
-        let startTime = Date()
-
-        try process.run()
-
-        // Wait with timeout
-        let deadline = Date().addingTimeInterval(timeoutSeconds)
-        while process.isRunning && Date() < deadline {
-            try await Task.sleep(nanoseconds: 50_000_000) // 50ms check
-        }
-
-        if process.isRunning {
-            process.terminate()
-            // Wait brief moment for SIGTERM, else force kill
-            try await Task.sleep(nanoseconds: 200_000_000)
-            if process.isRunning {
-                kill(process.processIdentifier, SIGKILL)
-            }
-        }
-
-        let duration = Date().timeIntervalSince(startTime)
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-
-        let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+        let cleanStdout = BottlePathValidator.sanitizeLog(output.standardOutput)
+        let cleanStderr = BottlePathValidator.sanitizeLog(output.standardError)
 
         let record = ExecutionLogRecord(
             executable: executableURL.lastPathComponent,
             arguments: arguments,
             prefixPath: environment["WINEPREFIX"] ?? "N/A",
-            exitCode: process.terminationStatus,
-            durationSeconds: duration,
-            standardOutput: stdout,
-            standardError: stderr
+            exitCode: output.exitCode,
+            durationSeconds: output.durationSeconds,
+            standardOutput: cleanStdout,
+            standardError: cleanStderr
         )
 
         // Write log file

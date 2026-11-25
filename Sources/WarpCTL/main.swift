@@ -241,15 +241,16 @@ struct WarpCTL {
             return
         }
 
-        let proc = Process()
-        proc.executableURL = serverURL
-        proc.arguments = ["-k"]
         var env = ProcessInfo.processInfo.environment
         env["WINEPREFIX"] = prefixURL.path
-        proc.environment = env
-
-        try? proc.run()
-        proc.waitUntilExit()
+        let supervisor = SteamProcessSupervisor()
+        _ = try? await supervisor.runAsync(
+            executableURL: serverURL,
+            arguments: ["-k"],
+            environment: env,
+            workingDirectory: nil,
+            timeoutSeconds: 10.0
+        )
         print("wineserver stopped cleanly for prefix: \(prefixName)")
     }
 
@@ -351,11 +352,14 @@ struct WarpCTL {
             let probePE = URL(fileURLWithPath: "/tmp/warp_d3d11_probe.exe")
             if !FileManager.default.fileExists(atPath: probePE.path) {
                 print("Synthesizing Direct3D 11 hardware test binary...")
-                let proc = Process()
-                proc.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-                proc.arguments = ["scripts/build_d3d11_test_pe.py", probePE.path]
-                try? proc.run()
-                proc.waitUntilExit()
+                let genSupervisor = SteamProcessSupervisor()
+                _ = try? await genSupervisor.runAsync(
+                    executableURL: URL(fileURLWithPath: "/usr/bin/python3"),
+                    arguments: ["scripts/build_d3d11_test_pe.py", probePE.path],
+                    environment: [:],
+                    workingDirectory: nil,
+                    timeoutSeconds: 15.0
+                )
             }
 
             let supervisor = ProcessSupervisor(logsDirectory: logsURL)
@@ -395,7 +399,7 @@ struct WarpCTL {
 
     private static func handleSteamCommand(subargs: [String], enginesRoot: URL, bottlesRoot: URL, workspaceRoot: URL) async {
         guard let action = subargs.first else {
-            print("Usage: warpctl steam <install|status|launch|list|run> [options]")
+            print("Usage: warpctl steam <diagnose|install|status|launch|repair|stop|verify|list|run> [options]")
             return
         }
 
@@ -414,14 +418,29 @@ struct WarpCTL {
         )
         let engineURL = enginesRoot.appendingPathComponent("wine-default")
         let engine = WineEngine(rootURL: engineURL)
-        let steam = SteamIntegration(bottle: bottle, engine: engine)
+        let controller = SteamSessionController(
+            bottle: bottle,
+            engine: engine,
+            logsDirectory: workspaceRoot.appendingPathComponent("logs", isDirectory: true)
+        )
+        let steam = await controller.integration
 
         switch action {
+        case "diagnose":
+            do {
+                let report = try await controller.diagnose()
+                print(report.formattedSummary())
+            } catch {
+                print("Steam diagnosis failed: \(error.localizedDescription)")
+            }
+
         case "status":
             print("=== Steam Integration Status [Prefix: \(prefixName)] ===")
             if let exe = await steam.detectedSteamExecutableURL {
                 print("Status:     [INSTALLED]")
                 print("Executable: \(exe.path)")
+                let activePID = await controller.supervisor.activeSessionPID(for: bottle)
+                print("Session:    \(activePID.map { "RUNNING (PID \($0))" } ?? "STOPPED")")
                 let libraries = await steam.discoverLibraryFolders()
                 print("Libraries:  \(libraries.count) discovered")
                 for lib in libraries {
@@ -472,38 +491,67 @@ struct WarpCTL {
                 appId = subargs[idx + 1]
             }
 
-            guard let steamExe = await steam.detectedSteamExecutableURL else {
-                print("Error: Steam is not installed in prefix '\(prefixName)'. Run 'warpctl steam install' first.")
-                return
+            var cefMode: CEFRenderMode = .disableGPU
+            if let idx = subargs.firstIndex(of: "--cef-mode"), idx + 1 < subargs.count,
+               let parsed = CEFRenderMode(rawValue: subargs[idx + 1]) {
+                cefMode = parsed
             }
 
-            await steam.ensureFontsInstalled()
-            var args = await steam.recommendedSteamArguments(smallMode: smallMode, gamepadUI: gamepadUI)
-            if let appId = appId {
-                args.append(contentsOf: ["-applaunch", appId])
-                print("Launching Steam AppID \(appId) in '\(prefixName)'...")
-            } else {
-                print("Launching Windows Steam client in '\(prefixName)'...")
-            }
-            if smallMode {
-                print("Mode: Small / Minimal (no-browser)")
-            }
-            print("Command: wine \(steamExe.lastPathComponent) \(args.joined(separator: " "))")
-            print("Note: Complete user login / Steam Guard manually in the Steam window.")
+            var extraArgs: [String] = []
+            if smallMode { extraArgs.append("-no-browser") }
+            if gamepadUI { extraArgs.append("-gamepadui") }
 
-            let proc = Process()
-            proc.executableURL = engine.binaryURL
-            proc.arguments = [steamExe.path] + args
-            proc.currentDirectoryURL = steamExe.deletingLastPathComponent()
-            var env = ProcessInfo.processInfo.environment
-            env["WINEPREFIX"] = bottle.rootURL.path
-            env["WINEDEBUG"] = "-all"
-            proc.environment = env
             do {
-                try proc.run()
-                proc.waitUntilExit()
+                let netReport = await controller.networkDiagnostics.diagnose(bottle: bottle)
+                var profiles: [SteamCompatibilityProfileID] = [.wineD3DOpenGL]
+                if cefMode != .gpuDefault {
+                    profiles.append(.cefSoftwareRender)
+                }
+                if netReport.requiresResolverOverride {
+                    profiles.append(.localhostDNSOverride)
+                }
+                let profile = SteamCompatibilityProfile.compose(
+                    profiles: profiles,
+                    cefRenderMode: cefMode,
+                    disableCEFSandbox: true,
+                    dns64Detected: netReport.requiresResolverOverride
+                )
+
+                let handle = try await controller.start(profile: profile, appId: appId, extraArguments: extraArgs)
+                print("SteamBridge session started (PID: \(handle.pid), Session: \(handle.sessionId.prefix(8)))")
+                print("Active Profiles: \(handle.profile.activeProfiles.map(\.rawValue).joined(separator: ", "))")
+                print("CEF Mode: \(handle.profile.cefRenderMode.rawValue)")
+                print("Note: Complete user login / Steam Guard manually in the Steam window.")
             } catch {
                 print("Launch failed: \(error.localizedDescription)")
+            }
+
+        case "repair":
+            do {
+                let report = try await controller.repair()
+                print("=== SteamBridge Repair Report [\(prefixName)] ===")
+                for actionItem in report.actionsPerformed {
+                    print("  [OK] \(actionItem)")
+                }
+                for warn in report.warnings {
+                    print("  [WARN] \(warn)")
+                }
+            } catch {
+                print("Repair failed: \(error.localizedDescription)")
+            }
+
+        case "stop":
+            await controller.stop()
+            print("Stopped SteamBridge session and wineserver for '\(prefixName)'.")
+
+        case "verify":
+            let ladder = SteamVerificationLadder()
+            let scratchDir = workspaceRoot.appendingPathComponent("scratch", isDirectory: true)
+            let steps = await ladder.runAutomatedChecks(controller: controller, scratchDirectory: scratchDir)
+            print("=== SteamBridge 13-Step Verification Ladder [\(prefixName)] ===")
+            for step in steps {
+                print("[\(step.status.rawValue)] Step \(step.id): \(step.name)")
+                print("    Evidence: \(step.evidence)")
             }
 
         case "run":
@@ -513,23 +561,9 @@ struct WarpCTL {
             }
             let appId = subargs[idx + 1]
             let extraArgs = Array(subargs.drop(while: { $0 != "--" }).dropFirst())
-            guard let steamExe = await steam.detectedSteamExecutableURL else {
-                print("Error: Steam is not installed in prefix '\(prefixName)'.")
-                return
-            }
-            print("Coordinating launch of Steam AppID \(appId)...")
-            let args = await steam.recommendedSteamArguments() + ["-applaunch", appId] + extraArgs
-            let proc = Process()
-            proc.executableURL = engine.binaryURL
-            proc.arguments = [steamExe.path] + args
-            proc.currentDirectoryURL = steamExe.deletingLastPathComponent()
-            var env = ProcessInfo.processInfo.environment
-            env["WINEPREFIX"] = bottle.rootURL.path
-            env["WINEDEBUG"] = "-all"
-            proc.environment = env
             do {
-                try proc.run()
-                proc.waitUntilExit()
+                let handle = try await controller.start(appId: appId, extraArguments: extraArgs)
+                print("Coordinated launch of Steam AppID \(appId) (PID: \(handle.pid)).")
             } catch {
                 print("Execution failed: \(error.localizedDescription)")
             }
@@ -564,9 +598,13 @@ struct WarpCTL {
           warpctl graphics inspect --prefix <n> Inspect graphics configuration for prefix
           warpctl graphics set --prefix <n> ... Set prefix backend (dxvk, dxmt, wined3d)
           warpctl graphics test --prefix <n>    Execute Direct3D 11 hardware probe
+          warpctl steam diagnose [--prefix <n>] Inspect DNS64, CEF & SteamBridge health
           warpctl steam status [--prefix <n>]   Inspect Windows Steam client in prefix
           warpctl steam install [--prefix <n>]  Install Windows Steam client
-          warpctl steam launch [--prefix <n>]   Launch Windows Steam client
+          warpctl steam launch [--prefix <n>]   Launch Windows Steam via SteamBridge
+          warpctl steam repair [--prefix <n>]   Repair CEF caches, overrides & processes
+          warpctl steam stop [--prefix <n>]     Stop bottle-scoped Steam session
+          warpctl steam verify [--prefix <n>]   Run 13-step Steam verification ladder
           warpctl steam list [--prefix <n>]     Discover installed Steam games in prefix
           warpctl steam run --app <id> ...      Launch installed Steam game
           warpctl logs                          Show recent process execution logs

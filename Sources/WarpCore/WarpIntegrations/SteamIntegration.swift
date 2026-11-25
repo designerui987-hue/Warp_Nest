@@ -101,7 +101,8 @@ public actor SteamIntegration {
         return steamExe.deletingLastPathComponent().appendingPathComponent("steamapps", isDirectory: true)
     }
 
-    /// Discovers all Steam library paths defined in `libraryfolders.vdf`.
+    /// Discovers all Steam library paths defined in `libraryfolders.vdf` using a brace-aware KeyValues parser
+    /// and canonical path containment to prevent path traversal.
     public func discoverLibraryFolders() -> [URL] {
         guard let primarySteamApps = defaultSteamAppsURL else { return [] }
         var libraries: [URL] = [primarySteamApps]
@@ -112,29 +113,76 @@ public actor SteamIntegration {
             return libraries
         }
 
-        // Parse "path" "..." entries
-        let pattern = #"\"path\"\s+\"([^\"]+)\""#
-        if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
-            let nsRange = NSRange(content.startIndex..<content.endIndex, in: content)
-            let matches = regex.matches(in: content, options: [], range: nsRange)
-            for match in matches {
-                if match.numberOfRanges == 2,
-                   let range = Range(match.range(at: 1), in: content) {
-                    var winPath = String(content[range])
-                    winPath = winPath.replacingOccurrences(of: "\\\\", with: "/")
-                    // Convert C:/... to bottle drive_c/...
-                    if winPath.hasPrefix("C:") || winPath.hasPrefix("c:") {
-                        let rel = String(winPath.dropFirst(2)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-                        let unixURL = bottle.driveCURL.appendingPathComponent(rel, isDirectory: true).appendingPathComponent("steamapps", isDirectory: true)
-                        if fileManager.fileExists(atPath: unixURL.path) && !libraries.contains(unixURL) {
-                            libraries.append(unixURL)
-                        }
-                    }
-                }
+        let parsedPaths = Self.extractLibraryPathsFromVDF(content)
+        for winPath in parsedPaths {
+            let normalized = winPath.replacingOccurrences(of: "\\\\", with: "/").replacingOccurrences(of: "\\", with: "/")
+            guard normalized.hasPrefix("C:") || normalized.hasPrefix("c:") else { continue }
+            let rel = String(normalized.dropFirst(2)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            guard !rel.contains("..") else { continue }
+            let candidate = bottle.driveCURL
+                .appendingPathComponent(rel, isDirectory: true)
+                .appendingPathComponent("steamapps", isDirectory: true)
+            if let canonical = try? BottlePathValidator.canonicalize(candidate, within: bottle.driveCURL),
+               fileManager.fileExists(atPath: canonical.path),
+               !libraries.contains(canonical) {
+                libraries.append(canonical)
             }
         }
 
         return libraries
+    }
+
+    /// Brace-aware nested VDF KeyValues extractor for `"path"` entries inside `"libraryfolders"`.
+    public static func extractLibraryPathsFromVDF(_ content: String) -> [String] {
+        var paths: [String] = []
+        var depth = 0
+        var inQuotes = false
+        var escaped = false
+        var currentToken = ""
+        var tokensInLine: [String] = []
+
+        for ch in content {
+            if escaped {
+                currentToken.append(ch)
+                escaped = false
+                continue
+            }
+            if ch == "\\" && inQuotes {
+                currentToken.append(ch)
+                escaped = true
+                continue
+            }
+            if ch == "\"" {
+                if inQuotes {
+                    tokensInLine.append(currentToken)
+                    currentToken = ""
+                    inQuotes = false
+                } else {
+                    inQuotes = true
+                }
+                continue
+            }
+            if inQuotes {
+                currentToken.append(ch)
+                continue
+            }
+            if ch == "{" {
+                depth += 1
+                tokensInLine.removeAll()
+            } else if ch == "}" {
+                depth = max(0, depth - 1)
+                tokensInLine.removeAll()
+            } else if ch == "\n" || ch == "\r" {
+                if depth >= 2 && tokensInLine.count >= 2 && tokensInLine[0].lowercased() == "path" {
+                    paths.append(tokensInLine[1])
+                }
+                tokensInLine.removeAll()
+            }
+        }
+        if depth >= 2 && tokensInLine.count >= 2 && tokensInLine[0].lowercased() == "path" {
+            paths.append(tokensInLine[1])
+        }
+        return paths
     }
 
     /// Scans all Steam libraries for `appmanifest_*.acf` files and returns discovered games.
@@ -217,8 +265,9 @@ public actor SteamIntegration {
     }
 
     /// Installs the Windows Steam client into this bottle using the official installer.
-    /// Safely stages the installer inside `drive_c` to respect Z: root containment.
+    /// Safely stages the installer inside `drive_c` to respect Z: root containment and runs asynchronously.
     public func install(from installerURL: URL) async throws {
+        try BottlePathValidator.validateBottle(bottle, fileManager: fileManager)
         guard verifyInstaller(at: installerURL) else {
             throw SteamIntegrationError.installerNotFound(installerURL)
         }
@@ -229,28 +278,33 @@ public actor SteamIntegration {
         }
         try fileManager.copyItem(at: installerURL, to: stagedInstaller)
 
-        let wineBin = engine.binaryURL
-        let proc = Process()
-        proc.executableURL = wineBin
-        proc.arguments = ["C:\\SteamSetup.exe", "/S"]
-        proc.currentDirectoryURL = bottle.driveCURL
-
         var env = ProcessInfo.processInfo.environment
         env["WINEPREFIX"] = bottle.rootURL.path
         env["WINEDEBUG"] = "-all"
-        proc.environment = env
+
+        let supervisor = SteamProcessSupervisor()
 
         do {
-            try proc.run()
-            proc.waitUntilExit()
+            let result = try await supervisor.runAsync(
+                executableURL: engine.binaryURL,
+                arguments: ["C:\\SteamSetup.exe", "/S"],
+                environment: env,
+                workingDirectory: bottle.driveCURL,
+                timeoutSeconds: 180.0
+            )
+            if result.timedOut || result.exitCode != 0 {
+                try? fileManager.removeItem(at: stagedInstaller)
+                throw SteamIntegrationError.installationFailed("Installer exited with code \(result.exitCode) (timedOut=\(result.timedOut)).")
+            }
 
-            // Wait for wineserver flush
-            let serverProc = Process()
-            serverProc.executableURL = engine.wineServerURL
-            serverProc.arguments = ["-w"]
-            serverProc.environment = env
-            try? serverProc.run()
-            serverProc.waitUntilExit()
+            // Wait for wineserver flush asynchronously
+            _ = try? await supervisor.runAsync(
+                executableURL: engine.wineServerURL,
+                arguments: ["-w"],
+                environment: env,
+                workingDirectory: nil,
+                timeoutSeconds: 30.0
+            )
 
             // Cleanup staged installer
             try? fileManager.removeItem(at: stagedInstaller)
@@ -315,7 +369,7 @@ public actor SteamIntegration {
             executableURL: steamExe,
             arguments: args,
             workingDirectory: steamExe.deletingLastPathComponent(),
-            graphicsBackend: .dxvk
+            graphicsBackend: .wined3d
         )
     }
 }
