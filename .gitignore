@@ -10,4 +10,13 @@ bottles/*
 !bottles/.gitkeep
 installers/*
 !installers/.gitkeep
-logs/*.log
+runtimes/*
+!runtimes/.gitkeep
+logs/*
+!logs/.gitkeep
+scratch/
+.cache/
+activate_wine
+inspect_windows
+ui_verifier
+*.dbg
