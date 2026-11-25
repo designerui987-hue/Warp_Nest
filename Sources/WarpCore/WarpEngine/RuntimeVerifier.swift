@@ -74,18 +74,18 @@ public struct RuntimeVerifier: Sendable {
         if !hasWine {
             issues.append("Missing or non-executable bin/wine binary")
         } else {
-            // Read version
+            // Read version asynchronously
             let activeBin = fm.isExecutableFile(atPath: wineBin) ? wineBin : wine64Bin
-            let proc = Process()
-            proc.executableURL = URL(fileURLWithPath: activeBin)
-            proc.arguments = ["--version"]
-            let pipe = Pipe()
-            proc.standardOutput = pipe
+            let supervisor = SteamProcessSupervisor()
             do {
-                try proc.run()
-                proc.waitUntilExit()
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                versionString = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let out = try await supervisor.runAsync(
+                    executableURL: URL(fileURLWithPath: activeBin),
+                    arguments: ["--version"],
+                    environment: [:],
+                    workingDirectory: nil,
+                    timeoutSeconds: 10.0
+                )
+                versionString = out.standardOutput.trimmingCharacters(in: .whitespacesAndNewlines)
             } catch {
                 issues.append("Failed to execute wine --version: \(error.localizedDescription)")
             }
