@@ -24,6 +24,8 @@ struct WarpCTL {
         case "doctor":
             let diag = SystemDiagnostics.inspect()
             print(diag.summaryReport())
+            let sense = WarpSenseTelemetry.capture(volumeURL: workspaceRoot)
+            print(sense.formattedSummary())
 
         case "runtime":
             await handleRuntimeCommand(subargs: subargs, enginesRoot: enginesRoot, manifestURL: manifestURL)

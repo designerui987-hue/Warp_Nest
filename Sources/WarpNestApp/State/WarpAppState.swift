@@ -89,6 +89,8 @@ final class WarpAppState {
 
     // Live Telemetry & Data
     var systemDiagnostics: SystemDiagnostics = .inspect()
+    var warpSenseSnapshot: WarpSenseSnapshot?
+    var benchmarkReports: [BenchmarkRunReport] = []
     var runtimeReport: RuntimeVerifier.VerificationReport?
     var runtimeManifest: RuntimeManifest?
     var graphicsBackends: [GraphicsBackendInfo] = []
@@ -107,6 +109,7 @@ final class WarpAppState {
     var hasCompletedOnboarding: Bool
     var metalFXEnabled: Bool
     var preferredBackend: GraphicsEngineType
+    var preferredBoostTier: WarpBoostTier
     var preferredCEFMode: CEFRenderMode
     var debugChannels: String
 
@@ -123,6 +126,7 @@ final class WarpAppState {
         self.hasCompletedOnboarding = persistence.getPreference("onboarding_done") == "true"
         self.metalFXEnabled = persistence.getPreference("metalfx_enabled") == "true"
         self.preferredBackend = GraphicsEngineType(rawValue: persistence.getPreference("preferred_backend") ?? "") ?? .dxvk
+        self.preferredBoostTier = WarpBoostTier(rawValue: persistence.getPreference("preferred_boost_tier") ?? "") ?? .balanced
         self.preferredCEFMode = CEFRenderMode(rawValue: persistence.getPreference("preferred_cef_mode") ?? "") ?? .disableGPU
         self.debugChannels = persistence.getPreference("wine_debug") ?? "-all"
 
@@ -179,6 +183,7 @@ final class WarpAppState {
         defer { isRefreshing = false }
 
         systemDiagnostics = SystemDiagnostics.inspect()
+        warpSenseSnapshot = WarpSenseTelemetry.capture(volumeURL: workspaceRoot)
         runtimeManifest = try? RuntimeManifest.load(from: manifestURL)
         runtimeReport = await RuntimeVerifier.verify(engineURL: wineEngineURL)
 
@@ -423,8 +428,61 @@ final class WarpAppState {
         persistence.setPreference("onboarding_done", value: hasCompletedOnboarding ? "true" : "false")
         persistence.setPreference("metalfx_enabled", value: metalFXEnabled ? "true" : "false")
         persistence.setPreference("preferred_backend", value: preferredBackend.rawValue)
+        persistence.setPreference("preferred_boost_tier", value: preferredBoostTier.rawValue)
         persistence.setPreference("preferred_cef_mode", value: preferredCEFMode.rawValue)
         persistence.setPreference("wine_debug", value: debugChannels)
         bannerNotice = "Preferences saved to SQLite."
+    }
+
+    func applyWarpBoostProfile(_ tier: WarpBoostTier) {
+        guard let bottle = activeBottle else {
+            bannerError = "Select a Windows environment first."
+            return
+        }
+        let snap = warpSenseSnapshot ?? WarpSenseTelemetry.capture(volumeURL: workspaceRoot)
+        let profile = WarpBoostProfile.preset(tier, telemetry: snap)
+        preferredBoostTier = tier
+        persistence.setPreference("preferred_boost_tier", value: tier.rawValue)
+
+        runCancellableOperation(title: "Apply WarpBoost (\(tier.rawValue))") {
+            let mgr = WarpBoostManager()
+            let url = try await mgr.apply(profile, in: bottle)
+            return "Saved reversible profile at \(url.lastPathComponent): \(profile.notes)"
+        }
+    }
+
+    func revertWarpBoostProfile() {
+        guard let bottle = activeBottle else { return }
+        runCancellableOperation(title: "Revert WarpBoost Profile") {
+            let mgr = WarpBoostManager()
+            let reverted = try await mgr.revert(in: bottle)
+            return reverted ? "Restored previous WarpBoost configuration." : "No WarpBoost backup to revert."
+        }
+    }
+
+    func runBackendBenchmarkProbe() {
+        let ws = workspaceRoot
+        let backend = preferredBackend
+        runCancellableOperation(title: "Benchmark Laboratory (\(backend.rawValue))") {
+            let lab = BenchmarkLaboratory()
+            let cfg = BenchmarkConfig(
+                targetName: "D3D11 Hardware Probe",
+                backend: backend,
+                resolution: "Headless",
+                warmUpSeconds: 0.5,
+                measurementSeconds: 1.0,
+                repetitions: 2,
+                sustainedTest: false
+            )
+            let report = try await lab.runBenchmark(config: cfg) {
+                // Probe produces no swapchain frame-times; BenchmarkLaboratory accurately reports instrumentationAvailable=false
+                let _ = ws
+                return []
+            }
+            await MainActor.run {
+                self.benchmarkReports.insert(report, at: 0)
+            }
+            return "Recorded thermal=\(report.thermalStateEnd.rawValue), peakMem=\(String(format: "%.1f", report.peakMemoryUsedGB))GB."
+        }
     }
 }

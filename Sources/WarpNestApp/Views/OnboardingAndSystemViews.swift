@@ -92,6 +92,20 @@ struct HardwareDetectionView: View {
                     }
                 }
 
+                if let snap = state.warpSenseSnapshot {
+                    WarpCard(title: "WarpSense Live Telemetry", subtitle: "Collected via Metal, Mach VM, IOKit.ps, and ProcessInfo") {
+                        VStack(spacing: 4) {
+                            MetadataRow("Metal GPU", value: snap.metal?.deviceName ?? "Unavailable")
+                            MetadataRow("Metal Features", value: snap.metal.map { "Unified=\($0.hasUnifiedMemory), Metal3=\($0.supportsMetal3), Apple9=\($0.supportsApple9)" } ?? "N/A")
+                            MetadataRow("Max Working Set", value: snap.metal.map { "\(String(format: "%.1f", $0.recommendedMaxWorkingSetGB)) GB" } ?? "N/A")
+                            MetadataRow("Memory Pressure", value: "\(String(format: "%.1f", snap.memory.usedMemoryGB)) / \(String(format: "%.1f", snap.memory.totalMemoryGB)) GB (\(snap.memory.pressureLevel))")
+                            MetadataRow("Available Storage", value: "\(String(format: "%.1f", snap.availableStorageGB)) GB")
+                            MetadataRow("Power Source", value: "\(snap.power.powerSource)\(snap.power.batteryPercent.map { " (\($0)%)" } ?? "")")
+                            MetadataRow("Thermal State", value: "\(snap.thermalState.rawValue) (Fanless Air aware)")
+                        }
+                    }
+                }
+
                 HStack {
                     Button("Re-scan Hardware") {
                         Task { await state.refreshAll() }

@@ -141,6 +141,50 @@ struct PerformanceSettingsView: View {
                     state.savePreferences()
                 }
                 .buttonStyle(WarpPrimaryButtonStyle())
+
+                WarpCard(title: "WarpBoost Reversible Profiles", subtitle: "Hardware-aware presets tailored to current power & thermal state.") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker("WarpBoost Tier", selection: $state.preferredBoostTier) {
+                            ForEach(WarpBoostTier.allCases, id: \.self) { tier in
+                                Text(tier.rawValue).tag(tier)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        HStack(spacing: 10) {
+                            Button("Apply Profile to Active Bottle") {
+                                state.applyWarpBoostProfile(state.preferredBoostTier)
+                            }
+                            .buttonStyle(WarpPrimaryButtonStyle(color: WarpTheme.electricBlue))
+
+                            Button("Revert WarpBoost") {
+                                state.revertWarpBoostProfile()
+                            }
+                            .buttonStyle(WarpSecondaryButtonStyle())
+
+                            Button("Run Benchmark Probe") {
+                                state.runBackendBenchmarkProbe()
+                            }
+                            .buttonStyle(WarpSecondaryButtonStyle())
+                        }
+
+                        if !state.benchmarkReports.isEmpty {
+                            ForEach(state.benchmarkReports) { rep in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("\(rep.config.targetName) [\(rep.config.backend.rawValue)] — \(rep.durationSeconds)s")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(WarpTheme.primaryText)
+                                    Text("Thermal: \(rep.thermalStateStart.rawValue) -> \(rep.thermalStateEnd.rawValue) | Peak Mem: \(String(format: "%.1f", rep.peakMemoryUsedGB)) GB | \(rep.notes)")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(WarpTheme.mutedText)
+                                }
+                                .padding(8)
+                                .background(WarpTheme.graphite)
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                            }
+                        }
+                    }
+                }
             }
             .padding(24)
         }
