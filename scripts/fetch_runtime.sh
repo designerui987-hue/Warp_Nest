@@ -16,12 +16,14 @@ DEFAULT_RELEASE_VERSION="11.21"
 DEFAULT_URL="https://github.com/Gcenx/macOS_Wine_builds/releases/download/${DEFAULT_RELEASE_VERSION}/wine-staging-${DEFAULT_RELEASE_VERSION}-osx64.tar.xz"
 
 LOCAL_TARBALL=""
+EXPECTED_SHA256=""
 
 usage() {
     echo "Usage: $0 [options]"
     echo ""
     echo "Options:"
     echo "  --local <path>     Extract an already-downloaded Wine tarball (.tar.xz or .tar.gz)"
+    echo "  --sha256 <hex>     Expected SHA-256 checksum for archive verification"
     echo "  --version <ver>    Specify Wine version to download (default: ${DEFAULT_RELEASE_VERSION})"
     echo "  --url <url>        Specify direct download URL"
     echo "  --target <dir>     Destination directory (default: ${DEFAULT_TARGET_DIR})"
@@ -33,6 +35,10 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --local)
             LOCAL_TARBALL="$2"
+            shift 2
+            ;;
+        --sha256)
+            EXPECTED_SHA256="$2"
             shift 2
             ;;
         --version)
@@ -80,9 +86,29 @@ else
     fi
 fi
 
+if [[ -n "${EXPECTED_SHA256}" ]]; then
+    ACTUAL_SHA256=$(shasum -a 256 "${SOURCE_ARCHIVE}" | awk '{print $1}')
+    if [[ "${ACTUAL_SHA256}" != "${EXPECTED_SHA256}" ]]; then
+        echo "SECURITY ERROR: SHA-256 mismatch! Expected ${EXPECTED_SHA256}, got ${ACTUAL_SHA256}"
+        [[ -z "${LOCAL_TARBALL}" ]] && rm -rf "${TEMP_DIR}"
+        exit 1
+    fi
+    echo "SHA-256 verified: ${ACTUAL_SHA256}"
+else
+    echo "WARNING: No --sha256 provided; printing computed digest for auditability:"
+    shasum -a 256 "${SOURCE_ARCHIVE}"
+fi
+
+echo "Validating archive entries against path traversal..."
+if tar -tf "${SOURCE_ARCHIVE}" | grep -qE '(^/|\.\.)'; then
+    echo "SECURITY ERROR: Archive contains unsafe absolute or '..' traversal paths."
+    [[ -z "${LOCAL_TARBALL}" ]] && rm -rf "${TEMP_DIR}"
+    exit 1
+fi
+
 echo "Extracting runtime to temporary extraction directory..."
 EXTRACT_TMP=$(mktemp -d /tmp/warpnest_extract.XXXXXX)
-tar -xf "${SOURCE_ARCHIVE}" -C "${EXTRACT_TMP}"
+tar --no-same-owner -xf "${SOURCE_ARCHIVE}" -C "${EXTRACT_TMP}"
 
 # Detect extraction layout
 # Some archives contain a top-level app bundle (e.g., 'Wine Staging.app/Contents/Resources/wine')

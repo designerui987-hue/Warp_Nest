@@ -24,6 +24,8 @@ struct WarpCTL {
         case "doctor":
             let diag = SystemDiagnostics.inspect()
             print(diag.summaryReport())
+            let sense = WarpSenseTelemetry.capture(volumeURL: workspaceRoot)
+            print(sense.formattedSummary())
 
         case "runtime":
             await handleRuntimeCommand(subargs: subargs, enginesRoot: enginesRoot, manifestURL: manifestURL)
@@ -137,7 +139,10 @@ struct WarpCTL {
                 return
             }
             let name = subargs[nameIdx + 1]
-            let prefixURL = bottlesRoot.appendingPathComponent(name)
+            guard let prefixURL = try? BottlePathValidator.canonicalize(bottlesRoot.appendingPathComponent(name), within: bottlesRoot) else {
+                print("Security error: Invalid prefix name '\(name)'.")
+                return
+            }
             let fm = FileManager.default
             guard fm.fileExists(atPath: prefixURL.path) else {
                 print("Prefix not found at: \(prefixURL.path)")
@@ -188,7 +193,10 @@ struct WarpCTL {
         }
 
         let engineURL = enginesRoot.appendingPathComponent("wine-default")
-        let prefixURL = bottlesRoot.appendingPathComponent(prefixName)
+        guard let prefixURL = try? BottlePathValidator.canonicalize(bottlesRoot.appendingPathComponent(prefixName), within: bottlesRoot) else {
+            print("Security error: Invalid prefix name '\(prefixName)'.")
+            return
+        }
 
         let wineBin = engineURL.appendingPathComponent("bin/wine")
         guard FileManager.default.isExecutableFile(atPath: wineBin.path) else {
@@ -233,7 +241,10 @@ struct WarpCTL {
             return
         }
         let prefixName = subargs[pfxIdx + 1]
-        let prefixURL = bottlesRoot.appendingPathComponent(prefixName)
+        guard let prefixURL = try? BottlePathValidator.canonicalize(bottlesRoot.appendingPathComponent(prefixName), within: bottlesRoot) else {
+            print("Security error: Invalid prefix name '\(prefixName)'.")
+            return
+        }
         let serverURL = enginesRoot.appendingPathComponent("wine-default/bin/wineserver")
 
         guard FileManager.default.isExecutableFile(atPath: serverURL.path) else {
