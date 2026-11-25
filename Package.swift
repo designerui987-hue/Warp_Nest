@@ -9,7 +9,8 @@ let package = Package(
     products: [
         .library(name: "WarpCore", targets: ["WarpCore"]),
         .executable(name: "warpctl", targets: ["WarpCTL"]),
-        .executable(name: "warpnest", targets: ["WarpCLI"])
+        .executable(name: "warpnest", targets: ["WarpCLI"]),
+        .executable(name: "WarpNestApp", targets: ["WarpNestApp"])
     ],
     targets: [
         .target(
@@ -23,6 +24,13 @@ let package = Package(
         .executableTarget(
             name: "WarpCLI",
             dependencies: ["WarpCore"]
+        ),
+        .executableTarget(
+            name: "WarpNestApp",
+            dependencies: ["WarpCore"],
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
+            ]
         ),
         .testTarget(
             name: "WarpCoreTests",
