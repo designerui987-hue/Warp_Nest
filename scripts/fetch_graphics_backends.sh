@@ -48,7 +48,7 @@ else
 fi
 
 # 2. Fetch DXMT if not present
-if [ ! -f "${BACKENDS_DIR}/dxmt/x64/d3d11.dll" ]; then
+if [ ! -f "${BACKENDS_DIR}/dxmt/x86_64-windows/d3d11.dll" ]; then
     echo "[2/4] Fetching DXMT..."
     TMP_DXMT="/tmp/dxmt.tar.gz"
     curl -fSL "${DXMT_URL}" -o "${TMP_DXMT}"
@@ -58,9 +58,11 @@ if [ ! -f "${BACKENDS_DIR}/dxmt/x64/d3d11.dll" ]; then
     mkdir -p "${TMP_EXTRACT}"
     tar -xzf "${TMP_DXMT}" -C "${TMP_EXTRACT}"
     
-    # Copy DLLs
-    DXMT_X64=$(find "${TMP_EXTRACT}" -type d -name "x64" | head -n 1)
-    cp -R "${DXMT_X64}" "${BACKENDS_DIR}/dxmt/"
+    # Copy x86_64-windows and i386-windows DLL directories
+    DXMT_X64=$(find "${TMP_EXTRACT}" -type d -name "x86_64-windows" | head -n 1)
+    DXMT_X86=$(find "${TMP_EXTRACT}" -type d -name "i386-windows" | head -n 1)
+    [ -n "${DXMT_X64}" ] && cp -R "${DXMT_X64}" "${BACKENDS_DIR}/dxmt/"
+    [ -n "${DXMT_X86}" ] && cp -R "${DXMT_X86}" "${BACKENDS_DIR}/dxmt/"
     
     # Deploy winemetal.so native bridge to wine lib directory if available
     WINEMETAL_SO=$(find "${TMP_EXTRACT}" -name "winemetal.so" | head -n 1)

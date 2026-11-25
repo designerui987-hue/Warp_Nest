@@ -75,9 +75,6 @@ public final class WineEngine: CompatibilityEngineProtocol, @unchecked Sendable 
             throw BottleError.executionFailed(validation.missingDependencies.joined(separator: ", "))
         }
 
-        let process = Process()
-        process.executableURL = binaryURL
-
         // Construct arguments
         var args: [String] = []
         let exePath = options.executableURL.path
@@ -88,13 +85,8 @@ public final class WineEngine: CompatibilityEngineProtocol, @unchecked Sendable 
             args.append(options.executableURL.lastPathComponent)
         }
         args.append(contentsOf: options.arguments)
-        process.arguments = args
 
-        if let workingDir = options.workingDirectory {
-            process.currentDirectoryURL = workingDir
-        } else {
-            process.currentDirectoryURL = bottle.driveCURL
-        }
+        let workingDir = options.workingDirectory ?? bottle.driveCURL
 
         // Environment configuration
         var environment = ProcessInfo.processInfo.environment
@@ -102,34 +94,27 @@ public final class WineEngine: CompatibilityEngineProtocol, @unchecked Sendable 
         for (k, v) in bottleEnv {
             environment[k] = v
         }
-        process.environment = environment
-
-        // Capture standard output and error
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
 
         let startTime = Date()
-
+        let supervisor = SteamProcessSupervisor()
+        let result: SupervisedProcessOutput
         do {
-            try process.run()
-            process.waitUntilExit()
+            result = try await supervisor.runAsync(
+                executableURL: binaryURL,
+                arguments: args,
+                environment: environment,
+                workingDirectory: workingDir,
+                timeoutSeconds: 300.0
+            )
         } catch {
             throw BottleError.executionFailed("Failed to spawn process: \(error.localizedDescription)")
         }
 
         let duration = Date().timeIntervalSince(startTime)
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-
-        let stdoutString = String(data: stdoutData, encoding: .utf8) ?? ""
-        let stderrString = String(data: stderrData, encoding: .utf8) ?? ""
-
         return ProcessExecutionResult(
-            exitCode: process.terminationStatus,
-            standardOutput: stdoutString,
-            standardError: stderrString,
+            exitCode: result.exitCode,
+            standardOutput: result.standardOutput,
+            standardError: result.standardError,
             durationSeconds: duration
         )
     }
@@ -138,14 +123,15 @@ public final class WineEngine: CompatibilityEngineProtocol, @unchecked Sendable 
     public func stopWineServer(for bottle: Bottle) async {
         guard fileManager.isExecutableFile(atPath: wineServerURL.path) else { return }
 
-        let process = Process()
-        process.executableURL = wineServerURL
-        process.arguments = ["-k"]
         var env = ProcessInfo.processInfo.environment
         env["WINEPREFIX"] = bottle.rootURL.path
-        process.environment = env
-
-        try? process.run()
-        process.waitUntilExit()
+        let supervisor = SteamProcessSupervisor()
+        _ = try? await supervisor.runAsync(
+            executableURL: wineServerURL,
+            arguments: ["-k"],
+            environment: env,
+            workingDirectory: nil,
+            timeoutSeconds: 10.0
+        )
     }
 }
