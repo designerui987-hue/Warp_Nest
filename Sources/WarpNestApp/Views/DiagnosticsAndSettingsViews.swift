@@ -237,21 +237,20 @@ struct PlatformsView: View {
                     }
                 }
 
-                WarpCard(title: "Epic Games Store (Legendary CLI)", subtitle: "Planned for future integration — not yet active in WarpCore.") {
-                    HStack {
-                        StatusPill("UNSUPPORTED", color: WarpTheme.mutedText)
-                        Text("OAuth & Keychain token integration is scheduled for a future milestone.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(WarpTheme.mutedText)
-                    }
-                }
-
-                WarpCard(title: "GOG Galaxy (heroic-gogdl)", subtitle: "Planned for future integration — not yet active in WarpCore.") {
-                    HStack {
-                        StatusPill("UNSUPPORTED", color: WarpTheme.mutedText)
-                        Text("GOG storefront integration is not yet implemented.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(WarpTheme.mutedText)
+                ForEach(state.providerStatuses.filter { $0.provider != .steam }) { snap in
+                    WarpCard(title: snap.provider.rawValue, subtitle: snap.license) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack {
+                                StatusPill(snap.authState.rawValue, color: snap.authState == .notRequired || snap.authState == .authenticated ? WarpTheme.verifiedGreen : WarpTheme.warningAmber)
+                                Spacer()
+                            }
+                            Text(snap.notes)
+                                .font(.system(size: 12))
+                                .foregroundStyle(WarpTheme.mutedText)
+                            Text("Capabilities: \(snap.supportedCapabilities.map(\.rawValue).sorted().joined(separator: ", "))")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(WarpTheme.mutedText)
+                        }
                     }
                 }
             }

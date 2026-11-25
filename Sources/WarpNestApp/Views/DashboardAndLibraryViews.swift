@@ -105,58 +105,39 @@ struct GameLibraryView: View {
             HStack {
                 ScreenHeader(
                     title: "Unified Game Library",
-                    subtitle: "Discovered read-only from Steam appmanifest_*.acf in \(state.activeBottle?.name ?? "selected bottle")."
+                    subtitle: "Multi-platform catalog across Steam, Epic, GOG, Local Windows, and Native macOS."
                 )
-                TextField("Search games or AppID...", text: $state.searchQuery)
+                TextField("Search title, store, or ID...", text: $state.searchQuery)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 240)
             }
             .padding(.horizontal, 24)
             .padding(.top, 24)
 
-            if state.activeBottle == nil {
-                WarpStateView(
-                    icon: "shippingbox",
-                    title: "No Windows Environment Selected",
-                    message: "Create or select a Windows environment in Windows Environments before inspecting installed games.",
-                    actionTitle: "Go to Environments"
-                ) {
-                    state.selectedScreen = .environments
-                }
-            } else if !state.steamInstalled {
-                WarpStateView(
-                    icon: "tray.and.arrow.down",
-                    title: "Windows Steam Not Installed",
-                    message: "Install the official Windows Steam client in '\(state.activeBottle?.name ?? "")' to download and discover your Steam library.",
-                    tint: WarpTheme.warningAmber,
-                    actionTitle: "Go to Connected Platforms"
-                ) {
-                    state.selectedScreen = .platforms
-                }
-            } else if state.filteredGames.isEmpty {
+            if state.filteredCanonicalGames.isEmpty {
                 WarpStateView(
                     icon: "gamecontroller",
-                    title: state.installedGames.isEmpty ? "No Installed Games Found" : "No Matching Games",
-                    message: state.installedGames.isEmpty
-                        ? "Launch Windows Steam to sign in manually and install a legitimately owned game."
+                    title: state.canonicalGames.isEmpty ? "No Installed Games Discovered" : "No Matching Games",
+                    message: state.canonicalGames.isEmpty
+                        ? "Connect a storefront in Connected Platforms or install a native macOS / Windows game."
                         : "Try clearing your search filter.",
-                    actionTitle: state.installedGames.isEmpty ? "Launch Steam" : "Clear Search"
+                    actionTitle: state.canonicalGames.isEmpty ? "Open Connected Platforms" : "Clear Search"
                 ) {
-                    if state.installedGames.isEmpty {
-                        state.launchSteam()
+                    if state.canonicalGames.isEmpty {
+                        state.selectedScreen = .platforms
                     } else {
                         state.searchQuery = ""
                     }
                 }
             } else {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 14)], spacing: 14) {
-                        ForEach(state.filteredGames) { game in
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 270), spacing: 14)], spacing: 14) {
+                        ForEach(state.filteredCanonicalGames) { game in
                             Button {
-                                state.selectedGame = game
+                                state.selectedCanonicalGame = game
                                 state.selectedScreen = .gameDetails
                             } label: {
-                                gameCard(game)
+                                canonicalCard(game)
                             }
                             .buttonStyle(.plain)
                         }
@@ -169,31 +150,28 @@ struct GameLibraryView: View {
         .background(WarpTheme.midnight)
     }
 
-    private func gameCard(_ game: SteamGame) -> some View {
+    private func canonicalCard(_ game: CanonicalGame) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("STEAM APP \(game.appId)")
+                Text(game.provider.rawValue.uppercased())
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(WarpTheme.electricBlue)
                 Spacer()
-                if game.isFullyInstalled {
-                    StatusPill("INSTALLED", color: WarpTheme.verifiedGreen)
-                } else if game.isDownloading {
-                    StatusPill("\(Int(game.downloadProgress * 100))%", color: WarpTheme.warningAmber)
-                } else {
-                    StatusPill("INCOMPLETE", color: WarpTheme.blockedRed)
-                }
+                StatusPill(game.ownershipState.rawValue, color: game.ownershipState == .verifiedPlayable || game.ownershipState == .installed ? WarpTheme.verifiedGreen : WarpTheme.warningAmber)
             }
 
-            Text(game.name)
+            Text(game.title)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(WarpTheme.primaryText)
                 .lineLimit(2)
 
-            let sizeGB = Double(game.sizeOnDisk) / (1024 * 1024 * 1024)
-            Text(String(format: "%.2f GB · Build %@", sizeGB, game.buildId.isEmpty ? "Unknown" : game.buildId))
-                .font(.system(size: 11))
-                .foregroundStyle(WarpTheme.mutedText)
+            HStack {
+                Text(game.edition)
+                    .font(.system(size: 11))
+                    .foregroundStyle(WarpTheme.mutedText)
+                Spacer()
+                StatusPill(status: game.compatibilityStatus)
+            }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -215,29 +193,28 @@ struct GameDetailsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                if let game = state.selectedGame {
-                    let dirExists = FileManager.default.fileExists(atPath: game.gameDirectoryURL.path)
-                    let canPlay = game.isFullyInstalled && dirExists && state.steamInstalled
+                if let game = state.selectedCanonicalGame {
+                    let existsOnDisk = game.installURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+                    let canPlay = (game.ownershipState == .installed || game.ownershipState == .verifiedPlayable) && existsOnDisk
 
                     ScreenHeader(
-                        title: game.name,
-                        subtitle: "Steam AppID \(game.appId) · Build \(game.buildId.isEmpty ? "Unknown" : game.buildId)",
-                        badge: (canPlay ? "READY TO LAUNCH" : (game.isDownloading ? "DOWNLOADING" : "UNAVAILABLE"), canPlay ? WarpTheme.verifiedGreen : WarpTheme.warningAmber)
+                        title: game.title,
+                        subtitle: "\(game.provider.rawValue) · \(game.edition) · ID \(game.storeAppId)",
+                        badge: (canPlay ? "READY TO LAUNCH" : "UNAVAILABLE", canPlay ? WarpTheme.verifiedGreen : WarpTheme.warningAmber)
                     )
 
-                    // Action Bar — Play button ONLY shown when installation is genuinely verified on disk
                     WarpCard {
                         HStack(spacing: 12) {
                             if canPlay {
-                                Button("Play via Steam") {
-                                    state.launchSteam(appId: game.appId)
+                                Button("Play (\(game.provider.rawValue))") {
+                                    state.launchCanonicalGame(game)
                                 }
                                 .buttonStyle(WarpPrimaryButtonStyle())
                             } else {
-                                StatusPill("PLAY UNAVAILABLE — INSTALLATION INCOMPLETE", color: WarpTheme.blockedRed)
+                                StatusPill("PLAY UNAVAILABLE — NOT INSTALLED ON DISK", color: WarpTheme.blockedRed)
                             }
 
-                            if state.activeSteamPID != nil {
+                            if game.provider == .steam && state.activeSteamPID != nil {
                                 Button("Stop Session") {
                                     state.stopActiveSession()
                                 }
@@ -253,46 +230,47 @@ struct GameDetailsView: View {
                         }
                     }
 
-                    WarpCard(title: "Verified Game Metadata", subtitle: "Read directly from appmanifest_\(game.appId).acf") {
+                    WarpCard(title: "Canonical Game Metadata", subtitle: "Ownership and compatibility are tracked independently.") {
                         VStack(spacing: 4) {
-                            MetadataRow("Platform", value: "Windows (Steam Client)")
-                            MetadataRow("Installation Status", value: game.isFullyInstalled ? (dirExists ? "Fully Installed" : "Manifest Present (Directory Missing)") : "Incomplete / Downloading")
-                            MetadataRow("Runtime Version", value: state.runtimeReport?.wineVersion ?? "Unknown", monospaced: true)
-                            MetadataRow("Graphics Backend", value: selectedGameBackend.rawValue)
-                            MetadataRow("Compatibility Evidence", value: "No invented FPS/scores; verify live via Diagnostics after launch.")
-                            let mb = Double(game.sizeOnDisk) / (1024 * 1024)
-                            MetadataRow("Storage Requirement", value: String(format: "%.1f MB on disk", mb))
-                            MetadataRow("Install Directory", value: game.gameDirectoryURL.path, monospaced: true)
-                            MetadataRow("Manifest File", value: game.manifestURL.path, monospaced: true)
+                            MetadataRow("Storefront", value: game.provider.rawValue)
+                            MetadataRow("Ownership State", value: game.ownershipState.rawValue)
+                            MetadataRow("Compatibility Status", value: game.compatibilityStatus.rawValue)
+                            MetadataRow("Runtime Requirement", value: game.runtimeRequirement)
+                            MetadataRow("Version / Build", value: game.version ?? "Unknown", monospaced: true)
+                            MetadataRow("Artwork Provenance", value: game.artworkProvenance)
+                            MetadataRow("Install Location", value: game.installURL?.path ?? "Not installed locally", monospaced: true)
+                            MetadataRow("Compatibility Evidence", value: "No invented FPS or scores; run Benchmark Laboratory or Diagnostics for live telemetry.")
                         }
                     }
 
-                    WarpCard(title: "Per-Game Graphics Backend", subtitle: "Applies transactional x64+x32 DLL deployment while keeping Steam UI isolated on WineD3D.") {
-                        HStack(spacing: 12) {
-                            Picker("Backend", selection: $selectedGameBackend) {
-                                Text("DXVK (Vulkan -> MoltenVK)").tag(GraphicsEngineType.dxvk)
-                                Text("DXMT (Direct Metal)").tag(GraphicsEngineType.dxmt)
-                                Text("WineD3D (Builtin)").tag(GraphicsEngineType.wined3d)
-                            }
-                            .pickerStyle(.segmented)
+                    if game.provider != .nativeMacOS {
+                        WarpCard(title: "Per-Game Graphics Backend", subtitle: "Applies transactional x64+x32 DLL deployment while keeping Steam UI isolated on WineD3D.") {
+                            HStack(spacing: 12) {
+                                Picker("Backend", selection: $selectedGameBackend) {
+                                    Text("DXVK (Vulkan -> MoltenVK)").tag(GraphicsEngineType.dxvk)
+                                    Text("DXMT (Direct Metal)").tag(GraphicsEngineType.dxmt)
+                                    Text("WineD3D (Builtin)").tag(GraphicsEngineType.wined3d)
+                                }
+                                .pickerStyle(.segmented)
 
-                            Button("Apply Backend") {
-                                state.changeGraphicsBackend(selectedGameBackend, forAppId: game.appId)
+                                Button("Apply Backend") {
+                                    state.changeGraphicsBackend(selectedGameBackend, forAppId: game.storeAppId)
+                                }
+                                .buttonStyle(WarpPrimaryButtonStyle(color: WarpTheme.electricBlue))
                             }
-                            .buttonStyle(WarpPrimaryButtonStyle(color: WarpTheme.electricBlue))
                         }
-                    }
-                    .onAppear {
-                        if let saved = state.persistence.getGameBackendOverride(appId: game.appId),
-                           let parsed = GraphicsEngineType(rawValue: saved) {
-                            selectedGameBackend = parsed
+                        .onAppear {
+                            if let saved = state.persistence.getGameBackendOverride(appId: game.storeAppId),
+                               let parsed = GraphicsEngineType(rawValue: saved) {
+                                selectedGameBackend = parsed
+                            }
                         }
                     }
                 } else {
                     WarpStateView(
                         icon: "info.circle",
                         title: "No Game Selected",
-                        message: "Select an installed game from the Unified Game Library to inspect its metadata and launch controls.",
+                        message: "Select a game from the Unified Game Library to inspect its canonical metadata and launch controls.",
                         actionTitle: "Open Game Library"
                     ) {
                         state.selectedScreen = .library

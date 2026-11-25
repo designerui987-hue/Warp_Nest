@@ -81,6 +81,7 @@ final class WarpAppState {
     // Navigation
     var selectedScreen: WarpScreen = .dashboard
     var selectedGame: SteamGame?
+    var selectedCanonicalGame: CanonicalGame?
     var searchQuery: String = ""
 
     // Paths
@@ -97,6 +98,9 @@ final class WarpAppState {
     var bottles: [Bottle] = []
     var selectedBottleName: String = "SteamBottle"
     var installedGames: [SteamGame] = []
+    var canonicalGames: [CanonicalGame] = []
+    var providerStatuses: [ProviderStatusSnapshot] = []
+    var providerErrors: [String] = []
     var steamInstalled: Bool = false
     var steamExecutablePath: String?
     var activeSteamPID: pid_t?
@@ -168,6 +172,16 @@ final class WarpAppState {
         bottles.first { $0.name == selectedBottleName } ?? bottles.first
     }
 
+    var filteredCanonicalGames: [CanonicalGame] {
+        let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return canonicalGames }
+        return canonicalGames.filter {
+            $0.title.localizedCaseInsensitiveContains(q)
+            || $0.provider.rawValue.localizedCaseInsensitiveContains(q)
+            || $0.storeAppId.localizedCaseInsensitiveContains(q)
+        }
+    }
+
     var filteredGames: [SteamGame] {
         let q = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return installedGames }
@@ -226,6 +240,41 @@ final class WarpAppState {
         recentLogContents = logURLs.compactMap { url in
             guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
             return (url.lastPathComponent, BottlePathValidator.sanitizeLog(text))
+        }
+
+        // Unified multi-platform provider discovery
+        let providers = makeProviders()
+        let coordinator = UnifiedLibraryCoordinator(providers: providers)
+        providerStatuses = await coordinator.fetchProviderStatuses()
+        let discovery = await coordinator.discoverAllInstalledGames()
+        canonicalGames = discovery.games
+        providerErrors = discovery.errors
+        if let sel = selectedCanonicalGame {
+            selectedCanonicalGame = canonicalGames.first(where: { $0.id == sel.id }) ?? sel
+        }
+    }
+
+    private func makeProviders() -> [any GameProviderProtocol] {
+        let engine = WineEngine(rootURL: wineEngineURL)
+        var list: [any GameProviderProtocol] = []
+        if let bottle = activeBottle {
+            list.append(SteamLibraryProvider(bottle: bottle, engine: engine, logsDirectory: logsRootURL))
+        }
+        list.append(EpicLegendaryProvider(bottle: activeBottle))
+        list.append(GOGLibraryProvider())
+        list.append(LocalWindowsProvider(bottlesRootURL: bottlesRootURL, engine: engine))
+        list.append(NativeMacOSProvider())
+        return list
+    }
+
+    func launchCanonicalGame(_ game: CanonicalGame) {
+        let providers = makeProviders()
+        runCancellableOperation(title: "Launch \(game.title) (\(game.provider.rawValue))") {
+            guard let provider = providers.first(where: { $0.providerType == game.provider }) else {
+                throw ProviderError.apiUnavailable(provider: game.provider, reason: "Provider not initialized.")
+            }
+            try await provider.launch(game: game)
+            return "Launched \(game.title)."
         }
     }
 
